@@ -55,6 +55,7 @@ private:
 protected:
 	static void _bind_methods();
 	bool initialized = false;
+	bool headless = false;
 	HashMap<StringName, LSP::DocumentSymbol> native_symbols;
 
 	// Absolute paths that are known to point to res://
@@ -79,6 +80,7 @@ public:
 
 public:
 	Error initialize();
+	Error initialize_headless();
 
 	String get_file_path(const String &p_uri);
 	String get_file_uri(const String &p_path) const;

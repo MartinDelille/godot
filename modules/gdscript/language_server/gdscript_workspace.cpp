@@ -374,6 +374,22 @@ Error GDScriptWorkspace::initialize() {
 	EditorNode *editor_node = EditorNode::get_singleton();
 	editor_node->connect("script_add_function_request", callable_mp(this, &GDScriptWorkspace::apply_new_signal));
 
+	initialized = true;
+	return OK;
+}
+
+Error GDScriptWorkspace::initialize_headless() {
+	if (initialized) {
+		return OK;
+	}
+
+	headless = true;
+
+	// In headless mode, skip documentation loading
+	// Native symbols won't be available for hover/completion
+	reload_all_workspace_scripts();
+
+	initialized = true;
 	return OK;
 }
 
@@ -553,11 +569,14 @@ String GDScriptWorkspace::get_file_path(const String &p_uri) {
 	}
 
 	// Resolve the file inside of the project using EditorFileSystem.
-	EditorFileSystemDirectory *editor_dir;
-	int file_idx;
-	editor_dir = EditorFileSystem::get_singleton()->find_file(simple_path, &file_idx);
-	if (editor_dir) {
-		return editor_dir->get_file_path(file_idx);
+	// In headless mode, EditorFileSystem may not be available.
+	if (!headless && EditorFileSystem::get_singleton()) {
+		EditorFileSystemDirectory *editor_dir;
+		int file_idx;
+		editor_dir = EditorFileSystem::get_singleton()->find_file(simple_path, &file_idx);
+		if (editor_dir) {
+			return editor_dir->get_file_path(file_idx);
+		}
 	}
 
 	return simple_path;

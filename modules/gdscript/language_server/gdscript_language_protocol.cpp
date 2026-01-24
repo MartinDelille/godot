@@ -31,12 +31,15 @@
 #include "gdscript_language_protocol.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "editor/doc/doc_tools.h"
 #include "editor/doc/editor_help.h"
 #include "editor/editor_log.h"
 #include "editor/editor_node.h"
 #include "editor/settings/editor_settings.h"
 #include "modules/gdscript/language_server/godot_lsp.h"
+
+#include <cstdio>
 
 #define LSP_CLIENT_V(m_ret_val) \
 	ERR_FAIL_COND_V(latest_client_id == LSP_NO_CLIENT, m_ret_val); \
@@ -315,6 +318,13 @@ Error GDScriptLanguageProtocol::start(int p_port, const IPAddress &p_bind_ip) {
 }
 
 void GDScriptLanguageProtocol::stop() {
+	running = false;
+
+	if (stdio_mode) {
+		clients.clear();
+		return;
+	}
+
 	for (const KeyValue<int, Ref<LSPeer>> &E : clients) {
 		Ref<LSPeer> peer = clients.get(E.key);
 		peer->connection->disconnect_from_host();
@@ -322,6 +332,124 @@ void GDScriptLanguageProtocol::stop() {
 
 	scene_cache.clear();
 	server->stop();
+}
+
+Error GDScriptLanguageProtocol::start_stdio() {
+	stdio_mode = true;
+	running = true;
+
+	// Create a virtual stdio peer
+	Ref<LSPeer> peer = memnew(LSPeer);
+	clients.insert(LSP_STDIO_CLIENT, peer);
+	latest_client_id = LSP_STDIO_CLIENT;
+
+	// Initialize workspace in headless mode
+	workspace->root = ProjectSettings::get_singleton()->get_resource_path();
+	workspace->initialize_headless();
+
+	return OK;
+}
+
+void GDScriptLanguageProtocol::poll_stdio() {
+	ERR_FAIL_COND(!stdio_mode);
+	ERR_FAIL_COND(!clients.has(LSP_STDIO_CLIENT));
+
+	Ref<LSPeer> peer = clients.get(LSP_STDIO_CLIENT);
+
+	// Handle incoming data from stdin
+	Error err = peer->handle_data_stdio();
+	if (err == ERR_FILE_EOF) {
+		// Client closed connection (EOF on stdin)
+		running = false;
+		return;
+	}
+
+	// Send any pending responses to stdout
+	peer->send_data_stdio();
+}
+
+Error GDScriptLanguageProtocol::LSPeer::handle_data_stdio() {
+	// Read headers from stdin
+	if (!has_header) {
+		while (true) {
+			if (req_pos >= LSP_MAX_BUFFER_SIZE) {
+				req_pos = 0;
+				ERR_FAIL_V_MSG(ERR_OUT_OF_MEMORY, "Request header too big");
+			}
+
+			int c = getchar();
+			if (c == EOF) {
+				return ERR_FILE_EOF;
+			}
+
+			req_buf[req_pos] = (uint8_t)c;
+			char *r = (char *)req_buf;
+			int l = req_pos;
+
+			// End of headers: \r\n\r\n
+			if (l > 3 && r[l] == '\n' && r[l - 1] == '\r' && r[l - 2] == '\n' && r[l - 3] == '\r') {
+				r[l - 3] = '\0'; // Null terminate to read string
+				String header = String::utf8(r);
+				// Parse Content-Length header
+				content_length = header.substr(16).to_int();
+				has_header = true;
+				req_pos = 0;
+				break;
+			}
+			req_pos++;
+		}
+	}
+
+	// Read content based on Content-Length
+	if (has_header) {
+		while (req_pos < content_length) {
+			if (req_pos >= LSP_MAX_BUFFER_SIZE) {
+				req_pos = 0;
+				has_header = false;
+				ERR_FAIL_V_MSG(ERR_OUT_OF_MEMORY, "Request content too big");
+			}
+
+			int c = getchar();
+			if (c == EOF) {
+				return ERR_FILE_EOF;
+			}
+
+			req_buf[req_pos] = (uint8_t)c;
+			req_pos++;
+		}
+
+		// Parse JSON-RPC message
+		String msg = String::utf8((const char *)req_buf, req_pos);
+
+		// Reset for next message
+		req_pos = 0;
+		has_header = false;
+
+		// Process and queue response
+		String output = GDScriptLanguageProtocol::get_singleton()->process_message(msg);
+		clear_stale_parsers();
+		if (!output.is_empty()) {
+			res_queue.push_back(output.utf8());
+		}
+	}
+
+	return OK;
+}
+
+Error GDScriptLanguageProtocol::LSPeer::send_data_stdio() {
+	while (!res_queue.is_empty()) {
+		CharString c_res = res_queue[0];
+		// Write entire response to stdout
+		size_t written = fwrite(c_res.get_data(), 1, c_res.size() - 1, stdout);
+		fflush(stdout);
+
+		if (written != (size_t)(c_res.size() - 1)) {
+			return ERR_FILE_CANT_WRITE;
+		}
+
+		res_queue.remove_at(0);
+	}
+	return OK;
 }
 
 void GDScriptLanguageProtocol::notify_client(const String &p_method, const Variant &p_params, int p_client_id) {
@@ -366,10 +494,16 @@ void GDScriptLanguageProtocol::request_client(const String &p_method, const Vari
 }
 
 bool GDScriptLanguageProtocol::is_smart_resolve_enabled() const {
+	if (stdio_mode) {
+		return true; // Default to enabled in headless mode
+	}
 	return bool(_EDITOR_GET("network/language_server/enable_smart_resolve"));
 }
 
 bool GDScriptLanguageProtocol::is_goto_native_symbols_enabled() const {
+	if (stdio_mode) {
+		return false; // Not available in headless mode
+	}
 	return bool(_EDITOR_GET("network/language_server/show_native_symbols_in_editor"));
 }
 

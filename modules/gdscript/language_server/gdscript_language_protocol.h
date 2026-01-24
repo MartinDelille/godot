@@ -43,6 +43,7 @@
 #define LSP_MAX_CLIENTS 8
 
 #define LSP_NO_CLIENT -1
+#define LSP_STDIO_CLIENT 0
 
 class GDScriptLanguageProtocol : public JSONRPC {
 	GDCLASS(GDScriptLanguageProtocol, JSONRPC)
@@ -64,7 +65,9 @@ private:
 		int res_sent = 0;
 
 		Error handle_data();
+		Error handle_data_stdio();
 		Error send_data();
+		Error send_data_stdio();
 
 		/**
 		 * Tracks all files that the client claimed, however for files deemed not relevant
@@ -103,6 +106,9 @@ private:
 	Ref<GDScriptTextDocument> text_document;
 	Ref<GDScriptWorkspace> workspace;
 
+	bool stdio_mode = false;
+	bool running = false;
+
 	Error on_client_connected();
 	void on_client_disconnected(const int &p_client_id);
 
@@ -128,6 +134,11 @@ public:
 	void poll(int p_limit_usec);
 	Error start(int p_port, const IPAddress &p_bind_ip);
 	void stop();
+
+	// Stdio mode for headless LSP server
+	Error start_stdio();
+	void poll_stdio();
+	bool is_running() const { return running; }
 
 	void notify_client(const String &p_method, const Variant &p_params = Variant(), int p_client_id = -1);
 	void request_client(const String &p_method, const Variant &p_params = Variant(), int p_client_id = -1);

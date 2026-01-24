@@ -208,6 +208,9 @@ static bool single_window = false;
 static bool editor = false;
 static bool project_manager = false;
 static bool cmdline_tool = false;
+#if defined(MODULE_GDSCRIPT_ENABLED) && !defined(GDSCRIPT_NO_LSP)
+static bool lsp_mode = false;
+#endif
 static String locale;
 static String log_file;
 static bool show_help = false;
@@ -558,6 +561,7 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--dap-port <port>", "Use the specified port for the GDScript Debug Adapter Protocol. Recommended port range [1024, 49151].\n", CLI_OPTION_AVAILABILITY_EDITOR);
 #if defined(MODULE_GDSCRIPT_ENABLED) && !defined(GDSCRIPT_NO_LSP)
 	print_help_option("--lsp-port <port>", "Use the specified port for the GDScript Language Server Protocol. Recommended port range [1024, 49151].\n", CLI_OPTION_AVAILABILITY_EDITOR);
+	print_help_option("--lsp", "Start the GDScript Language Server in headless mode, communicating via stdio.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 #endif // MODULE_GDSCRIPT_ENABLED && !GDSCRIPT_NO_LSP
 #endif
 	print_help_option("--quit", "Quit after the first iteration.\n");
@@ -1958,6 +1962,13 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				OS::get_singleton()->print("Missing <port> argument for --lsp-port <port>.\n");
 				goto error;
 			}
+		} else if (arg == "--lsp") {
+			lsp_mode = true;
+			editor = false;
+			cmdline_tool = true;
+			audio_driver = NULL_AUDIO_DRIVER;
+			display_driver = NULL_DISPLAY_DRIVER;
+			Engine::get_singleton()->_print_header = false;
 #endif // TOOLS_ENABLED && MODULE_GDSCRIPT_ENABLED && !GDSCRIPT_NO_LSP
 #if defined(TOOLS_ENABLED)
 		} else if (arg == "--dap-port") {
@@ -2266,7 +2277,7 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 
 	if (main_args.is_empty() && String(GLOBAL_GET("application/run/main_scene")) == "") {
 #ifdef TOOLS_ENABLED
-		if (!editor && !project_manager) {
+		if (!editor && !project_manager && !cmdline_tool) {
 #endif
 			const String error_msg = "Error: Can't run project: no main scene defined in the project.\n";
 			OS::get_singleton()->print("%s", error_msg.utf8().get_data());
@@ -4188,6 +4199,25 @@ int Main::start() {
 		return ret ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 #endif // DISABLE_DEPRECATED
+
+#if defined(MODULE_GDSCRIPT_ENABLED) && !defined(GDSCRIPT_NO_LSP)
+	if (lsp_mode) {
+		GDScriptLanguageProtocol *lsp = memnew(GDScriptLanguageProtocol);
+		Error err = lsp->start_stdio();
+		if (err != OK) {
+			memdelete(lsp);
+			ERR_FAIL_V_MSG(EXIT_FAILURE, "Failed to start GDScript Language Server in stdio mode.");
+		}
+
+		// Main LSP loop - read from stdin, write to stdout
+		while (lsp->is_running()) {
+			lsp->poll_stdio();
+		}
+
+		memdelete(lsp);
+		return EXIT_SUCCESS;
+	}
+#endif // MODULE_GDSCRIPT_ENABLED && !GDSCRIPT_NO_LSP
 
 #endif // TOOLS_ENABLED
 
