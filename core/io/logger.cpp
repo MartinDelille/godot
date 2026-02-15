@@ -266,6 +266,14 @@ void CompositeLogger::add_logger(Logger *p_logger) {
 	loggers.push_back(p_logger);
 }
 
+void CompositeLogger::remove_std_loggers() {
+	for (int i = loggers.size() - 1; i >= 0; --i) {
+		if (dynamic_cast<StdLogger *>(loggers[i])) {
+			memdelete(loggers[i]);
+			loggers.remove_at(i);
+		}
+	}
+}
 CompositeLogger::~CompositeLogger() {
 	for (int i = 0; i < loggers.size(); ++i) {
 		memdelete(loggers[i]);

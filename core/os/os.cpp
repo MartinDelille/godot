@@ -92,12 +92,7 @@ void OS::add_logger(Logger *p_logger) {
 
 void OS::remove_std_logger() {
 	if (_logger) {
-		for (int i = 0; i < _logger->get_logger_count(); i++) {
-			if (dynamic_cast<StdLogger *>(_logger->get_logger(i))) {
-				_logger->remove_logger(i);
-				return;
-			}
-		}
+		_logger->remove_std_loggers();
 	}
 }
 
