@@ -1963,6 +1963,8 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				goto error;
 			}
 		} else if (arg == "--lsp") {
+			OS::get_singleton()->remove_std_logger();
+
 			lsp_mode = true;
 			editor = false;
 			cmdline_tool = true;
@@ -2001,7 +2003,6 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				OS::get_singleton()->print("Missing <window_id> argument for --wid <window_id>.\n");
 				goto error;
 			}
-
 		} else if (arg == "--" || arg == "++") {
 			adding_user_args = true;
 		} else {
